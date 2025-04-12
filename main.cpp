@@ -121,20 +121,47 @@ void processCreate(vector<string> query, Tables<int> &tables) {
 }
 
 auto defineNumberOfCreateStatements(vector<string> query) {
-    vector<vector<string>::iterator> iterators;
+    vector<vector<string>> result;
+    vector<string>::iterator beginRange;
+    vector<string>::iterator endRange;
+    bool constructionValid = false;
+
     for (auto i = query.begin(); i != query.end(); i++) {
+
         if (*i == DBCommands::create) {
-            iterators.push_back(i);
+            beginRange = i;
         }
+
+        if (*i == ")") {
+            endRange = i+1;
+            constructionValid = true;
+        }
+
+        if (constructionValid) {
+            auto temp = vector<string>(beginRange, endRange);
+            result.push_back(temp);
+            constructionValid = false;
+        }
+
     }
-    return iterators;
+
+    return result;
 
 }
 
 void processQuery(vector<string> query, Tables<int> &tables) {
     if (query[0] == DBCommands::create) {
-        auto iteratorsToCreate = defineNumberOfCreateStatements(query);
-        processCreate(query, tables);
+        auto vectorOfCreateQueries = defineNumberOfCreateStatements(query);
+        if (vectorOfCreateQueries.size() > 1) {
+            for (const auto &item: vectorOfCreateQueries) {
+                processCreate(item, tables);
+                return;
+            }
+        } else {
+            processCreate(query, tables);
+            return;
+        }
+
     }
 
     cout << "Unknown query was entered\n";
