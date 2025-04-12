@@ -1,0 +1,21 @@
+# ninja log v5
+0	62	7659949919044680	fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-mkdir	208484e11878d35f
+0	62	7659949919044680	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-mkdir	208484e11878d35f
+63	3335	7659949951781977	fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-download	5893ab32676d6a2
+63	3335	7659949951781977	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-download	5893ab32676d6a2
+3336	3501	0	fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-update	cd70fbc91c23d798
+3336	3501	0	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-update	cd70fbc91c23d798
+3501	3559	7659949954006851	fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-patch	d35c276c1775ce0f
+3501	3559	7659949954006851	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-patch	d35c276c1775ce0f
+3559	3617	7659949954591254	fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-configure	cf83de7c4de9a8d2
+3559	3617	7659949954591254	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-configure	cf83de7c4de9a8d2
+3617	3680	7659949955200647	fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-build	70fa8d2f890e0830
+3617	3680	7659949955200647	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-build	70fa8d2f890e0830
+3680	3744	7659949955846386	fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-install	12f425c86ac30d2b
+3680	3744	7659949955846386	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-install	12f425c86ac30d2b
+3744	3798	7659949956407527	fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-test	e02bb055b8c57df1
+3744	3798	7659949956407527	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-test	e02bb055b8c57df1
+3798	3874	7659949957131692	CMakeFiles/fmt-populate-complete	61ba52b227c0bb73
+3798	3874	7659949957131692	fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-done	61ba52b227c0bb73
+3798	3874	7659949957131692	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/CMakeFiles/fmt-populate-complete	61ba52b227c0bb73
+3798	3874	7659949957131692	C:/Users/Acer/Desktop/cpp_Project/cmake-build-debug/_deps/fmt-subbuild/fmt-populate-prefix/src/fmt-populate-stamp/fmt-populate-done	61ba52b227c0bb73
