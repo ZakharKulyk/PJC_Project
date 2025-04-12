@@ -27,7 +27,7 @@ public:
 template<typename T>
 class Tables {
 public:
-   map<std::string, RowColumn<T>> tables;
+    map<std::string, RowColumn<T>> tables;
 };
 
 
@@ -58,75 +58,91 @@ vector<string> deleteSpaces(string &line) {
 }
 
 
+void processCreate(vector<string> query, Tables<int> &tables) {
+    string tableName = query[1];
+
+    // Initialize the RowColumn for this table
+    RowColumn<int> data;
+
+    // Process the column definitions inside parentheses
+    bool insideParentheses = false;
+    string currentColumnName;
+    string currentColumnType;
+
+    for (int i = 2; i < query.size(); ++i) {
+        string word = query[i];
+
+        if (word == "(") {
+            insideParentheses = true;
+            continue;
+        }
+        if (word == ")") {
+            insideParentheses = false;
+            continue;
+        }
+
+        if (insideParentheses) {
+            if (currentColumnName.empty()) {
+                // It's the column name
+                currentColumnName = word;
+            } else {
+                // It's the column type
+                currentColumnType = word;
+
+                // Initialize the vector with the appropriate default value
+                if (currentColumnType == "int") {
+                    // Store a vector of ColumnValue with a default value (int)
+                    data.rowColumn[currentColumnName] = {ColumnValue(0)};  // Correct for vector of ColumnValue
+                } else if (currentColumnType == "string") {
+                    // Store a vector of ColumnValue with a default value (empty string)
+                    data.rowColumn[currentColumnName] = {ColumnValue("")};  // Correct for vector of ColumnValue
+                } else if (currentColumnType == "float") {
+                    // Store a vector of ColumnValue with a default value (float)
+                    data.rowColumn[currentColumnName] = {ColumnValue(0.0f)};  // Correct for vector of ColumnValue
+                }
+
+                // Reset for next column definition
+                currentColumnName.clear();
+                currentColumnType.clear();
+            }
+        }
+    }
+
+    // Add this table to the tables map
+    tables.tables[tableName] = data;
+
+    for (const auto &item: data.rowColumn) {
+        cout << "column name " + item.first;
+        cout << " values ";
+        for (const auto &item: item.second) {
+            printColumnValue(item);
+        }
+    }
+}
+
+auto defineNumberOfCreateStatements(vector<string> query) {
+    vector<vector<string>::iterator> iterators;
+    for (auto i = query.begin(); i != query.end(); i++) {
+        if (*i == DBCommands::create) {
+            iterators.push_back(i);
+        }
+    }
+    return iterators;
+
+}
+
 void processQuery(vector<string> query, Tables<int> &tables) {
     if (query[0] == DBCommands::create) {
-        // Parse the table name
-        string tableName = query[1];
-
-        // Initialize the RowColumn for this table
-        RowColumn<int> data;
-
-        // Process the column definitions inside parentheses
-        bool insideParentheses = false;
-        string currentColumnName;
-        string currentColumnType;
-
-        for (int i = 2; i < query.size(); ++i) {
-            string word = query[i];
-
-            if (word == "(") {
-                insideParentheses = true;
-                continue;
-            }
-            if (word == ")") {
-                insideParentheses = false;
-                continue;
-            }
-
-            if (insideParentheses) {
-                if (currentColumnName.empty()) {
-                    // It's the column name
-                    currentColumnName = word;
-                } else {
-                    // It's the column type
-                    currentColumnType = word;
-
-                    // Initialize the vector with the appropriate default value
-                    if (currentColumnType == "int") {
-                        // Store a vector of ColumnValue with a default value (int)
-                        data.rowColumn[currentColumnName] = {ColumnValue(0)};  // Correct for vector of ColumnValue
-                    } else if (currentColumnType == "string") {
-                        // Store a vector of ColumnValue with a default value (empty string)
-                        data.rowColumn[currentColumnName] = {ColumnValue("")};  // Correct for vector of ColumnValue
-                    } else if (currentColumnType == "float") {
-                        // Store a vector of ColumnValue with a default value (float)
-                        data.rowColumn[currentColumnName] = {ColumnValue(0.0f)};  // Correct for vector of ColumnValue
-                    }
-
-                    // Reset for next column definition
-                    currentColumnName.clear();
-                    currentColumnType.clear();
-                }
-            }
-        }
-
-        // Add this table to the tables map
-        tables.tables[tableName] = data;
-
-        cout << "Table created: " << tableName << endl;
-        for (const auto &item: data.rowColumn) {
-            cout << "Column name: " << item.first << " with values: ";
-            // Loop through each value in the vector and print
-            for (const auto &value : item.second) {
-                printColumnValue(value);  // Print each value inside the vector
-            }
-            cout << endl;
-        }
-        return;
+        auto iteratorsToCreate = defineNumberOfCreateStatements(query);
+        processCreate(query, tables);
     }
 
     cout << "Unknown query was entered\n";
+    return;
 }
+
+
+
 
 // Define static member outside the class
 
@@ -134,7 +150,7 @@ void processQuery(vector<string> query, Tables<int> &tables) {
 void startProgram() {
     vector<string> query;
     string line;
-    Tables<int>tables;
+    Tables<int> tables;
 
 
     cout << "Program started, now you can enter sql commands\n";
