@@ -27,7 +27,8 @@ public:
 template<typename T>
 class Tables {
 public:
-    map<std::string, RowColumn<T>> tables;
+    map<string, RowColumn<T>> tables;
+    map<string, vector<string>> primaryKeys;
 };
 
 
@@ -57,6 +58,36 @@ vector<string> deleteSpaces(string &line) {
     return words;
 }
 
+void processPrimaryKeysWithCreate(vector<string> query, Tables<int> &tables) {
+    vector<vector<string>::iterator> primaryLocationVector;
+    for (auto i = query.begin(); i != query.end(); i++) {
+        if (*i == "primary") {
+            primaryLocationVector.push_back(i);
+        }
+    }
+
+    if (primaryLocationVector.empty()) {
+        fmt::println("{}", "no primary key in table !");
+        return;
+    }
+    for (auto primaryLocation: primaryLocationVector) {
+        auto keyLocation = primaryLocation + 1;
+
+        if (*(keyLocation + 1) == "(") {
+            auto tableName = query[1];
+            auto nameOfPrimaryKeyColumn = *(keyLocation + 2);
+            tables.primaryKeys[tableName].push_back(nameOfPrimaryKeyColumn);
+            continue;
+        } else {
+            auto tableName = query[1];
+            auto nameOfPrimaryKeyColumn = *(primaryLocation - 2);
+            tables.primaryKeys[tableName].push_back(nameOfPrimaryKeyColumn);
+        }
+    }
+
+
+}
+
 
 void processCreate(vector<string> query, Tables<int> &tables) {
     string tableName = query[1];
@@ -71,7 +102,16 @@ void processCreate(vector<string> query, Tables<int> &tables) {
 
     for (int i = 2; i < query.size(); ++i) {
         string word = query[i];
-
+        if (word == "primary") {
+            if (query[i + 1] == "key") {
+                if(query[i+2]=="("){
+                    i = i + 4;
+                    continue;
+                }
+                i = i+1;
+                continue;
+            }
+        }
         if (word == "(") {
             insideParentheses = true;
             continue;
@@ -132,8 +172,19 @@ auto defineNumberOfCreateStatements(vector<string> query) {
             beginRange = i;
         }
 
+        if (*i == "primary") {
+            if (*(i + 1) == "key") {
+                if(*(i+2)=="("){
+                    i = i + 4;
+                    continue;
+                }
+                i=i+1;
+                continue;
+            }
+        }
+
         if (*i == ")") {
-            endRange = i+1;
+            endRange = i + 1;
             constructionValid = true;
         }
 
@@ -150,15 +201,19 @@ auto defineNumberOfCreateStatements(vector<string> query) {
 }
 
 void processQuery(vector<string> query, Tables<int> &tables) {
+    if (query[0] == "exit") {
+        return;
+    }
     if (query[0] == DBCommands::create) {
         auto vectorOfCreateQueries = defineNumberOfCreateStatements(query);
         if (vectorOfCreateQueries.size() > 1) {
             for (const auto &item: vectorOfCreateQueries) {
                 processCreate(item, tables);
-                return;
+                processPrimaryKeysWithCreate(item, tables);
             }
         } else {
             processCreate(query, tables);
+            processPrimaryKeysWithCreate(query, tables);
             return;
         }
 
