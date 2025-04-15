@@ -36,14 +36,15 @@ void deleteTable(string tableName, Tables<int> &tables) {
 }
 
 namespace DBCommands {
-    const std::string create = "create";
+    const string create = "create";
+    const string insert = "insert";
 }
 
 
 void toLower(vector<string> &query) {
     for (string &str: query) {
         transform(str.begin(), str.end(), str.begin(), [](unsigned char c) {
-            return std::tolower(c);
+            return tolower(c);
         });
     }
 }
@@ -172,6 +173,58 @@ void processCreate(vector<string> query, Tables<int> &tables) {
 
 }
 
+void processInsert(const vector<string> &query, Tables<int> &tables) {
+    if (query.size() < 6 || query[0] != "insert" || query[1] != "into" || query[3] != "values") {
+        fmt::println("Invalid insert statement.");
+        return;
+    }
+
+    string tableName = query[2];
+
+    if (!tables.tables.contains(tableName)) {
+        fmt::println("Table '{}' does not exist.", tableName);
+        return;
+    }
+
+    RowColumn<int> &table = tables.tables[tableName];
+
+    // Parse values inside parentheses
+    int startIdx = 4;
+    while (startIdx < query.size() && query[startIdx] != "(") ++startIdx;
+    int endIdx = startIdx + 1;
+    while (endIdx < query.size() && query[endIdx] != ")") ++endIdx;
+
+    if (startIdx >= query.size() || endIdx >= query.size()) {
+        fmt::println("Missing parentheses around values.");
+        return;
+    }
+
+    vector<string> values(query.begin() + startIdx + 1, query.begin() + endIdx);
+    if (values.size() != table.rowColumn.size()) {
+        fmt::println("Column count does not match values count.");
+        return;
+    }
+
+    auto colIt = table.rowColumn.begin();
+    for (const string &val : values) {
+        ColumnValue typedVal;
+
+        // Determine the expected type by looking at the first element in the column
+        if (holds_alternative<int>(colIt->second.front())) {
+            typedVal = stoi(val);
+        } else if (holds_alternative<float>(colIt->second.front())) {
+            typedVal = stof(val);
+        } else {
+            typedVal = val;
+        }
+
+        colIt->second.push_back(typedVal);
+        ++colIt;
+    }
+
+    fmt::println("Inserted into table '{}'", tableName);
+}
+
 auto defineNumberOfCreateStatements(vector<string> query) {
     vector<vector<string>> result;
     vector<string>::iterator beginRange;
@@ -222,15 +275,17 @@ void processQuery(vector<string> query, Tables<int> &tables) {
             for (const auto &item: vectorOfCreateQueries) {
                 processCreate(item, tables);
             }
-            return;
         } else {
             processCreate(query, tables);
-            return;
         }
-
     }
 
-    cout << "Unknown query was entered\n";
+    auto it = find(query.begin(), query.end(), DBCommands::insert);
+    if (it != query.end()) {
+        vector<string> insertQuery(it, query.end());
+        processInsert(insertQuery, tables);
+    }
+
     return;
 }
 
@@ -249,7 +304,6 @@ void startProgram() {
     cout << "Program started, now you can enter sql commands\n";
 
     while (true) {
-
         if (query.size() == 1 && query[0] == "exit") {
             break;
         }
@@ -265,6 +319,7 @@ void startProgram() {
         toLower(query);
 
         processQuery(query, tables);
+        query.clear();
         cout << "query was entered\n";
 
 
