@@ -31,6 +31,9 @@ public:
     map<string, vector<string>> primaryKeys;
 };
 
+void deleteTable(string tableName, Tables<int> &tables) {
+    tables.tables.erase(tableName);
+}
 
 namespace DBCommands {
     const std::string create = "create";
@@ -58,7 +61,7 @@ vector<string> deleteSpaces(string &line) {
     return words;
 }
 
-void processPrimaryKeysWithCreate(vector<string> query, Tables<int> &tables) {
+bool processPrimaryKeysWithCreate(vector<string> query, Tables<int> &tables) {
     vector<vector<string>::iterator> primaryLocationVector;
     for (auto i = query.begin(); i != query.end(); i++) {
         if (*i == "primary") {
@@ -68,7 +71,7 @@ void processPrimaryKeysWithCreate(vector<string> query, Tables<int> &tables) {
 
     if (primaryLocationVector.empty()) {
         fmt::println("{}", "no primary key in table !");
-        return;
+        return false;
     }
     for (auto primaryLocation: primaryLocationVector) {
         auto keyLocation = primaryLocation + 1;
@@ -76,15 +79,28 @@ void processPrimaryKeysWithCreate(vector<string> query, Tables<int> &tables) {
         if (*(keyLocation + 1) == "(") {
             auto tableName = query[1];
             auto nameOfPrimaryKeyColumn = *(keyLocation + 2);
+
+            if (!(tables.tables[tableName].rowColumn.contains(nameOfPrimaryKeyColumn))) {
+                fmt::println("no such column exist {}", nameOfPrimaryKeyColumn);
+                tables.primaryKeys.erase(tableName);
+                return false;
+            }
+
             tables.primaryKeys[tableName].push_back(nameOfPrimaryKeyColumn);
             continue;
         } else {
             auto tableName = query[1];
             auto nameOfPrimaryKeyColumn = *(primaryLocation - 2);
+            if (!(tables.tables[tableName].rowColumn.contains(nameOfPrimaryKeyColumn))) {
+                fmt::println("no such column exist {}", nameOfPrimaryKeyColumn);
+                tables.primaryKeys.clear();
+                return false;
+            }
             tables.primaryKeys[tableName].push_back(nameOfPrimaryKeyColumn);
         }
-    }
 
+    }
+    return true;
 
 }
 
@@ -104,11 +120,11 @@ void processCreate(vector<string> query, Tables<int> &tables) {
         string word = query[i];
         if (word == "primary") {
             if (query[i + 1] == "key") {
-                if(query[i+2]=="("){
+                if (query[i + 2] == "(") {
                     i = i + 4;
                     continue;
                 }
-                i = i+1;
+                i = i + 1;
                 continue;
             }
         }
@@ -150,14 +166,10 @@ void processCreate(vector<string> query, Tables<int> &tables) {
 
     // Add this table to the tables map
     tables.tables[tableName] = data;
-
-    for (const auto &item: data.rowColumn) {
-        cout << "column name " + item.first;
-        cout << " values ";
-        for (const auto &item: item.second) {
-            printColumnValue(item);
-        }
+    if (!processPrimaryKeysWithCreate(query, tables)) {
+        deleteTable(tableName, tables);
     }
+
 }
 
 auto defineNumberOfCreateStatements(vector<string> query) {
@@ -174,11 +186,11 @@ auto defineNumberOfCreateStatements(vector<string> query) {
 
         if (*i == "primary") {
             if (*(i + 1) == "key") {
-                if(*(i+2)=="("){
+                if (*(i + 2) == "(") {
                     i = i + 4;
                     continue;
                 }
-                i=i+1;
+                i = i + 1;
                 continue;
             }
         }
@@ -209,11 +221,10 @@ void processQuery(vector<string> query, Tables<int> &tables) {
         if (vectorOfCreateQueries.size() > 1) {
             for (const auto &item: vectorOfCreateQueries) {
                 processCreate(item, tables);
-                processPrimaryKeysWithCreate(item, tables);
             }
+            return;
         } else {
             processCreate(query, tables);
-            processPrimaryKeysWithCreate(query, tables);
             return;
         }
 
