@@ -18,6 +18,15 @@ void printColumnValue(const ColumnValue &value) {
     visit([](const auto &val) { fmt::print("{} ", val); }, value);
 }
 
+
+std::string toString(const ColumnValue& val) {
+    return std::visit([](auto&& arg) -> std::string {
+        std::ostringstream oss;
+        oss << arg;
+        return oss.str();
+    }, val);
+}
+
 template<typename T>
 class RowColumn {
 public:
@@ -107,6 +116,7 @@ bool processPrimaryKeysWithCreate(vector<string> query, Tables<int> &tables) {
 
 
 void processCreate(vector<string> query, Tables<int> &tables) {
+
     string tableName = query[1];
 
     // Initialize the RowColumn for this table
@@ -174,12 +184,13 @@ void processCreate(vector<string> query, Tables<int> &tables) {
 }
 
 void processInsert(const vector<string> &query, Tables<int> &tables) {
-    if (query.size() < 6 || query[0] != "insert" || query[1] != "into" || query[3] != "values") {
+    if (query.size() < 7 || query[0] != "insert" || query[1] != "into") {
         fmt::println("Invalid insert statement.");
         return;
     }
 
     string tableName = query[2];
+
 
     if (!tables.tables.contains(tableName)) {
         fmt::println("Table '{}' does not exist.", tableName);
@@ -188,39 +199,77 @@ void processInsert(const vector<string> &query, Tables<int> &tables) {
 
     RowColumn<int> &table = tables.tables[tableName];
 
-    // Parse values inside parentheses
-    int startIdx = 4;
+    // Parse column names inside parentheses
+    int startIdx = 2;
     while (startIdx < query.size() && query[startIdx] != "(") ++startIdx;
     int endIdx = startIdx + 1;
     while (endIdx < query.size() && query[endIdx] != ")") ++endIdx;
 
-    if (startIdx >= query.size() || endIdx >= query.size()) {
-        fmt::println("Missing parentheses around values.");
+
+    vector<string> columnNames(query.begin() + startIdx + 1, query.begin() + endIdx);
+
+    int starIdxForValues = endIdx + 1;
+    while (starIdxForValues < query.size() && query[starIdxForValues] != "(") ++starIdxForValues;
+    int endIdxForValues = starIdxForValues + 1;
+    while (endIdxForValues < query.size() && query[endIdxForValues] != ")") ++endIdxForValues;
+    // Parse relative column values after key word Values
+    vector<string> columnValues(query.begin() + starIdxForValues + 1, query.begin() + endIdxForValues);
+
+    if (columnNames.size() != columnValues.size()) {
+        fmt::println("{}", "there is mismatch in desired values to be inserted and predifined columns ");
         return;
     }
 
-    vector<string> values(query.begin() + startIdx + 1, query.begin() + endIdx);
-    if (values.size() != table.rowColumn.size()) {
-        fmt::println("Column count does not match values count.");
-        return;
+
+    map<string, string> columnsToValue;
+
+    for (int i = 0; i < columnNames.size(); i++) {
+        columnsToValue[columnNames[i]] = columnValues[i];
     }
+    auto vectorOfPrimaryKeys = tables.primaryKeys[tableName];
+
+    for (const auto &primaryKey: vectorOfPrimaryKeys) {
+
+        auto valToBeUnique = columnsToValue[primaryKey];
+
+        for (const auto &item: tables.tables[tableName].rowColumn[primaryKey]) {
+            if(toString(item)==valToBeUnique){
+                fmt::println("{}", "value of primary key is not unique !");
+                return;
+            }
+
+        }
+    }
+
 
     auto colIt = table.rowColumn.begin();
-    for (const string &val : values) {
-        ColumnValue typedVal;
 
-        // Determine the expected type by looking at the first element in the column
+    for(colIt; colIt!=table.rowColumn.end(); colIt++){
+       auto valToInsert = columnsToValue[colIt->first];
+       ColumnValue typedVal;
         if (holds_alternative<int>(colIt->second.front())) {
-            typedVal = stoi(val);
+            typedVal = stoi(valToInsert);
         } else if (holds_alternative<float>(colIt->second.front())) {
-            typedVal = stof(val);
+            typedVal = stof(valToInsert);
         } else {
-            typedVal = val;
+            typedVal = valToInsert;
         }
-
         colIt->second.push_back(typedVal);
-        ++colIt;
     }
+//    for (auto val: columnValues) {
+//        ColumnValue typedVal;
+//        // Determine the expected type by looking at the first element in the column
+//        if (holds_alternative<int>(colIt->second.front())) {
+//            typedVal = stoi(val);
+//        } else if (holds_alternative<float>(colIt->second.front())) {
+//            typedVal = stof(val);
+//        } else {
+//            typedVal = val;
+//        }
+//
+//        colIt->second.push_back(typedVal);
+//        ++colIt;
+//    }
 
     fmt::println("Inserted into table '{}'", tableName);
 }
