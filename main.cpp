@@ -7,6 +7,7 @@
 #include <fmt/base.h>
 #include <fmt/ranges.h>
 #include <variant>
+#include <queue>
 
 using namespace std;
 
@@ -19,8 +20,8 @@ void printColumnValue(const ColumnValue &value) {
 }
 
 
-std::string toString(const ColumnValue& val) {
-    return std::visit([](auto&& arg) -> std::string {
+std::string toString(const ColumnValue &val) {
+    return std::visit([](auto &&arg) -> std::string {
         std::ostringstream oss;
         oss << arg;
         return oss.str();
@@ -183,6 +184,41 @@ void processCreate(vector<string> query, Tables<int> &tables) {
 
 }
 
+auto defineNumberOfInsertStatements(vector<string> query) {
+    vector<vector<string>> result;
+    vector<string>::iterator beginRange;
+    vector<string>::iterator endRange;
+    int countOfPassedParentheses;
+
+    for (auto i = query.begin(); i != query.end(); ++i) {
+        if (*i == DBCommands::insert) {
+            int numberOfIterationsDone;
+            beginRange = i;
+            while (*i != "(") {
+                ++numberOfIterationsDone;
+                ++i;
+
+            }
+            ++countOfPassedParentheses;
+            while (*i != ")") {
+                ++numberOfIterationsDone;
+                ++i;
+            }
+            ++countOfPassedParentheses;
+            if (countOfPassedParentheses == 2) {
+                endRange = i + numberOfIterationsDone;
+                vector<string> sub = vector<string>(beginRange, endRange);
+                result.push_back(sub);
+                countOfPassedParentheses = 0;
+                numberOfIterationsDone = 0;
+            }
+
+        }
+    }
+
+    return result;
+}
+
 void processInsert(const vector<string> &query, Tables<int> &tables) {
     if (query.size() < 7 || query[0] != "insert" || query[1] != "into") {
         fmt::println("Invalid insert statement.");
@@ -226,36 +262,52 @@ void processInsert(const vector<string> &query, Tables<int> &tables) {
     for (int i = 0; i < columnNames.size(); i++) {
         columnsToValue[columnNames[i]] = columnValues[i];
     }
+
     auto vectorOfPrimaryKeys = tables.primaryKeys[tableName];
 
-    for (const auto &primaryKey: vectorOfPrimaryKeys) {
+    if (!vectorOfPrimaryKeys.empty()) {
+        // Build composite key for the new row
+        vector<string> newCompositeKey;
+        for (const auto &pk: vectorOfPrimaryKeys) {
+            newCompositeKey.push_back(columnsToValue[pk]);
+        }
 
-        auto valToBeUnique = columnsToValue[primaryKey];
-
-        for (const auto &item: tables.tables[tableName].rowColumn[primaryKey]) {
-            if(toString(item)==valToBeUnique){
-                fmt::println("{}", "value of primary key is not unique !");
+        // Check against existing rows
+        int numRows = table.rowColumn.begin()->second.size(); // number of rows
+        for (int row = 0; row < numRows; ++row) {
+            vector<string> existingCompositeKey;
+            for (const auto &pk: vectorOfPrimaryKeys) {
+                existingCompositeKey.push_back(toString(table.rowColumn[pk][row]));
+            }
+            if (existingCompositeKey == newCompositeKey) {
+                fmt::println("Composite primary key constraint violated! Duplicate entry.");
                 return;
             }
-
         }
     }
 
+    // ---- INSERT VALUES ----
+    for (auto &[colName, colValues]: table.rowColumn) {
+        if (!columnsToValue.contains(colName)) {
+            fmt::println("Column '{}' missing from insert statement.", colName);
+            return;
+        }
+        string valToInsert = columnsToValue[colName];
+        ColumnValue typedVal;
 
-    auto colIt = table.rowColumn.begin();
-
-    for(colIt; colIt!=table.rowColumn.end(); colIt++){
-       auto valToInsert = columnsToValue[colIt->first];
-       ColumnValue typedVal;
-        if (holds_alternative<int>(colIt->second.front())) {
+        if (holds_alternative<int>(colValues.front())) {
             typedVal = stoi(valToInsert);
-        } else if (holds_alternative<float>(colIt->second.front())) {
+        } else if (holds_alternative<float>(colValues.front())) {
             typedVal = stof(valToInsert);
         } else {
             typedVal = valToInsert;
         }
-        colIt->second.push_back(typedVal);
+
+        colValues.push_back(typedVal);
     }
+
+    fmt::println("Inserted into table '{}'", tableName);
+
 //    for (auto val: columnValues) {
 //        ColumnValue typedVal;
 //        // Determine the expected type by looking at the first element in the column
@@ -274,19 +326,22 @@ void processInsert(const vector<string> &query, Tables<int> &tables) {
     fmt::println("Inserted into table '{}'", tableName);
 }
 
+
 auto defineNumberOfCreateStatements(vector<string> query) {
     vector<vector<string>> result;
     vector<string>::iterator beginRange;
     vector<string>::iterator endRange;
     bool constructionValid = false;
+    bool isCreateStatement = false;
 
     for (auto i = query.begin(); i != query.end(); i++) {
 
         if (*i == DBCommands::create) {
             beginRange = i;
+            isCreateStatement = true;
         }
 
-        if (*i == "primary") {
+        if (*i == "primary" && isCreateStatement) {
             if (*(i + 1) == "key") {
                 if (*(i + 2) == "(") {
                     i = i + 4;
@@ -297,7 +352,7 @@ auto defineNumberOfCreateStatements(vector<string> query) {
             }
         }
 
-        if (*i == ")") {
+        if (*i == ")" && isCreateStatement) {
             endRange = i + 1;
             constructionValid = true;
         }
@@ -306,6 +361,7 @@ auto defineNumberOfCreateStatements(vector<string> query) {
             auto temp = vector<string>(beginRange, endRange);
             result.push_back(temp);
             constructionValid = false;
+            isCreateStatement = false;
         }
 
     }
@@ -318,21 +374,17 @@ void processQuery(vector<string> query, Tables<int> &tables) {
     if (query[0] == "exit") {
         return;
     }
-    if (query[0] == DBCommands::create) {
-        auto vectorOfCreateQueries = defineNumberOfCreateStatements(query);
-        if (vectorOfCreateQueries.size() > 1) {
-            for (const auto &item: vectorOfCreateQueries) {
-                processCreate(item, tables);
-            }
-        } else {
-            processCreate(query, tables);
-        }
+
+    auto vectorOfCreateQueries = defineNumberOfCreateStatements(query);
+
+    for (const auto &item: vectorOfCreateQueries) {
+        processCreate(item, tables);
     }
 
-    auto it = find(query.begin(), query.end(), DBCommands::insert);
-    if (it != query.end()) {
-        vector<string> insertQuery(it, query.end());
-        processInsert(insertQuery, tables);
+
+    auto vectorOfInsertQueries = defineNumberOfInsertStatements(query);
+    for (auto item: vectorOfInsertQueries) {
+        processInsert(item, tables);
     }
 
     return;
