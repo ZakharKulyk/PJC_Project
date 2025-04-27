@@ -41,6 +41,24 @@ public:
     map<string, vector<string>> primaryKeys;
 };
 
+
+class WhereCondition {
+public:
+    string column;
+    string operation;
+    string value;
+
+    WhereCondition(string col, string op, string val)
+            : column(col), operation(op), value(val) {}
+};
+
+class WherePattern {
+public:
+    vector<WhereCondition> conditions;  // Stores all conditions
+    vector<string> logicalOperators;    // Stores logical operators like AND, OR
+};
+
+
 void deleteTable(string tableName, Tables<int> &tables) {
     tables.tables.erase(tableName);
 }
@@ -48,6 +66,8 @@ void deleteTable(string tableName, Tables<int> &tables) {
 namespace DBCommands {
     const string create = "create";
     const string insert = "insert";
+    const string select = "select";
+    const string where = "where";
 }
 
 
@@ -219,6 +239,196 @@ auto defineNumberOfInsertStatements(vector<string> query) {
     return result;
 }
 
+auto processWhereStatement(const vector<string>& query) {
+    auto whereLoc = find(query.begin(), query.end(), DBCommands::where);
+
+    // Create an empty WherePattern
+    WherePattern wherePattern;
+
+    // Start reading from after the 'WHERE' keyword
+    auto conditionStart = whereLoc + 1;
+
+    // Parse conditions and operators
+    string currentColumn;
+    string currentOp;
+    string currentValue;
+    string currentOperator = "";  // Initialize as empty, will change to AND/OR
+
+    for (auto it = conditionStart; it != query.end(); ++it) {
+        // Handle logical operators (AND/OR) in a case-insensitive manner
+        if (*it == "and" || *it == "or") {
+            wherePattern.logicalOperators.push_back(*it);  // Store AND/OR
+        } else if (currentColumn.empty()) {
+            currentColumn = *it;  // First part of the condition (column)
+        } else if (currentOp.empty()) {
+            currentOp = *it;  // The operator part of the condition (e.g., >, <, =)
+        } else {
+            currentValue = *it;
+
+            // Here we don't need to strip quotes, as the value is just a string directly
+            wherePattern.conditions.push_back(WhereCondition(currentColumn, currentOp, currentValue));
+
+            // Reset for the next condition
+            currentColumn.clear();
+            currentOp.clear();
+            currentValue.clear();
+        }
+    }
+
+    return wherePattern;
+}
+
+void processSelect(const vector<string>& query, Tables<int>& tables) {
+    if (query.size() < 2) {
+        fmt::println("Invalid SELECT format.");
+        return;
+    }
+
+    if (find(query.begin(), query.end(), DBCommands::insert) != query.end() ||
+        find(query.begin(), query.end(), DBCommands::create) != query.end()) {
+        fmt::println("Select query cannot contain keywords for Insert or Create.");
+        return;
+    }
+
+    bool isSelectingColumns = true;
+    vector<string> targetedColumns;
+    string tableName;
+
+    for (auto it = query.begin() + 1; it != query.end(); ++it) {
+        if (*it == "from") {
+            isSelectingColumns = false;
+            continue;
+        }
+
+        if (isSelectingColumns) {
+            targetedColumns.push_back(*it);
+        } else {
+            tableName = *it;
+            break;
+        }
+    }
+
+    if (tables.tables.count(tableName) == 0) {
+        fmt::println("No such table exists: '{}'", tableName);
+        return;
+    }
+
+    auto& columns = tables.tables[tableName].rowColumn;
+
+    vector<string> actualColumnsToPrint;
+    bool isWherePresent = false;
+    WherePattern pattern;
+
+    if (std::find(query.begin(), query.end(), DBCommands::where) != query.end()) {
+        pattern = processWhereStatement(query);
+        isWherePresent = true;
+    }
+
+    // Add targeted columns for SELECT
+    if (targetedColumns.size() == 1 && targetedColumns[0] == "*") {
+        // Select all columns
+        for (const auto& pair : columns) {
+            actualColumnsToPrint.push_back(pair.first);
+        }
+    } else {
+        for (const auto& target : targetedColumns) {
+            if (!columns.contains(target)) {
+                fmt::println("No such column '{}' in table '{}'", target, tableName);
+                return;
+            }
+            actualColumnsToPrint.push_back(target);
+        }
+    }
+
+    // Print header
+    for (const auto& colName : actualColumnsToPrint) {
+        fmt::print("| {:15} ", colName);
+    }
+    fmt::print("|\n");
+
+    // Print separator
+    for (size_t i = 0; i < actualColumnsToPrint.size(); ++i) {
+        fmt::print("|{:-^17}", "");
+    }
+    fmt::print("|\n");
+
+    // Find number of rows
+    int numRows = columns.begin()->second.size();
+
+    // Print each row
+    for (int rowIdx = 0; rowIdx < numRows; ++rowIdx) {
+        bool conditionPass = true;  // Assume the row is valid until proven otherwise
+        bool hasPassedAnyCondition = false;  // For OR logic
+
+        // Evaluate WHERE conditions
+        if (isWherePresent) {
+            for (size_t i = 0; i < pattern.conditions.size(); ++i) {
+                const auto& condition = pattern.conditions[i];
+                const auto& columnData = columns.at(condition.column);
+                const auto& cell = columnData[rowIdx];
+
+                bool currentConditionPass = false;
+
+                // Check if the value in the column matches the operation
+                if (std::holds_alternative<int>(cell)) {
+                    int cellValue = std::get<int>(cell);
+                    int targetValue = std::stoi(condition.value);
+
+                    if (condition.operation == ">") {
+                        currentConditionPass = (cellValue > targetValue);
+                    } else if (condition.operation == "<") {
+                        currentConditionPass = (cellValue < targetValue);
+                    } else if (condition.operation == ">=") {
+                        currentConditionPass = (cellValue >= targetValue);
+                    } else if (condition.operation == "<=") {
+                        currentConditionPass = (cellValue <= targetValue);
+                    } else if (condition.operation == "=") {
+                        currentConditionPass = (cellValue == targetValue);
+                    }
+                } else if (std::holds_alternative<std::string>(cell)) {
+                    const std::string& cellValue = std::get<std::string>(cell);
+
+                    if (condition.operation == "=") {
+                        currentConditionPass = (cellValue == condition.value);
+                    } else if (condition.operation == ">") {
+                        currentConditionPass = (cellValue > condition.value);
+                    } else if (condition.operation == "<") {
+                        currentConditionPass = (cellValue < condition.value);
+                    } else if (condition.operation == ">=") {
+                        currentConditionPass = (cellValue >= condition.value);
+                    } else if (condition.operation == "<=") {
+                        currentConditionPass = (cellValue <= condition.value);
+                    }
+                }
+
+                // Apply logical operators:
+                if (pattern.logicalOperators.size() > 0 && i > 0) {
+                    if (pattern.logicalOperators[i - 1] == "and" && !currentConditionPass) {
+                        conditionPass = false;  // All must pass for AND
+                        break;  // No need to check further if it's an AND condition and failed
+                    }
+                    if (pattern.logicalOperators[i - 1] == "or" && currentConditionPass) {
+                        hasPassedAnyCondition = true;  // Only one needs to pass for OR
+                    }
+                } else {
+                    // For the first condition, we just check
+                    conditionPass = currentConditionPass;
+                }
+            }
+        }
+
+        // Only print the row if the condition passes (AND/OR logic)
+        if (conditionPass || hasPassedAnyCondition) {
+            for (const auto& colName : actualColumnsToPrint) {
+                printColumnValue(columns.at(colName)[rowIdx]);
+                fmt::print("{: <5}", ""); // Small gap after value
+            }
+            fmt::print("\n");
+        }
+    }
+}
+
+
 void processInsert(const vector<string> &query, Tables<int> &tables) {
     if (query.size() < 7 || query[0] != "insert" || query[1] != "into") {
         fmt::println("Invalid insert statement.");
@@ -307,23 +517,6 @@ void processInsert(const vector<string> &query, Tables<int> &tables) {
     }
 
     fmt::println("Inserted into table '{}'", tableName);
-
-//    for (auto val: columnValues) {
-//        ColumnValue typedVal;
-//        // Determine the expected type by looking at the first element in the column
-//        if (holds_alternative<int>(colIt->second.front())) {
-//            typedVal = stoi(val);
-//        } else if (holds_alternative<float>(colIt->second.front())) {
-//            typedVal = stof(val);
-//        } else {
-//            typedVal = val;
-//        }
-//
-//        colIt->second.push_back(typedVal);
-//        ++colIt;
-//    }
-
-    fmt::println("Inserted into table '{}'", tableName);
 }
 
 
@@ -375,6 +568,12 @@ void processQuery(vector<string> query, Tables<int> &tables) {
         return;
     }
 
+
+    if (query[0] == DBCommands::select) {
+        processSelect(query, tables);
+        return;
+    }
+
     auto vectorOfCreateQueries = defineNumberOfCreateStatements(query);
 
     for (const auto &item: vectorOfCreateQueries) {
@@ -383,6 +582,7 @@ void processQuery(vector<string> query, Tables<int> &tables) {
 
 
     auto vectorOfInsertQueries = defineNumberOfInsertStatements(query);
+
     for (auto item: vectorOfInsertQueries) {
         processInsert(item, tables);
     }
