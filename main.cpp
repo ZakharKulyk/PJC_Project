@@ -28,6 +28,15 @@ std::string toString(const ColumnValue &val) {
     }, val);
 }
 
+
+struct ForeignKey {
+    string referencingTable;
+    vector<std::string> referencingColumns;
+
+    string referencedTable;
+    vector<std::string> referencedColumns;
+};
+
 template<typename T>
 class RowColumn {
 public:
@@ -39,6 +48,7 @@ class Tables {
 public:
     map<string, RowColumn<T>> tables;
     map<string, vector<string>> primaryKeys;
+    vector<ForeignKey> foreignKeys;
 };
 
 
@@ -68,6 +78,9 @@ namespace DBCommands {
     const string insert = "insert";
     const string select = "select";
     const string where = "where";
+    const string alter = "alter";
+    const string foreign = "foreign";
+    const string add = "add";
 }
 
 
@@ -239,7 +252,7 @@ auto defineNumberOfInsertStatements(vector<string> query) {
     return result;
 }
 
-auto processWhereStatement(const vector<string>& query) {
+auto processWhereStatement(const vector<string> &query) {
     auto whereLoc = find(query.begin(), query.end(), DBCommands::where);
 
     // Create an empty WherePattern
@@ -265,7 +278,7 @@ auto processWhereStatement(const vector<string>& query) {
         } else {
             currentValue = *it;
 
-            // Here we don't need to strip quotes, as the value is just a string directly
+
             wherePattern.conditions.push_back(WhereCondition(currentColumn, currentOp, currentValue));
 
             // Reset for the next condition
@@ -278,7 +291,7 @@ auto processWhereStatement(const vector<string>& query) {
     return wherePattern;
 }
 
-void processSelect(const vector<string>& query, Tables<int>& tables) {
+void processSelect(const vector<string> &query, Tables<int> &tables) {
     if (query.size() < 2) {
         fmt::println("Invalid SELECT format.");
         return;
@@ -313,7 +326,7 @@ void processSelect(const vector<string>& query, Tables<int>& tables) {
         return;
     }
 
-    auto& columns = tables.tables[tableName].rowColumn;
+    auto &columns = tables.tables[tableName].rowColumn;
 
     vector<string> actualColumnsToPrint;
     bool isWherePresent = false;
@@ -327,11 +340,11 @@ void processSelect(const vector<string>& query, Tables<int>& tables) {
     // Add targeted columns for SELECT
     if (targetedColumns.size() == 1 && targetedColumns[0] == "*") {
         // Select all columns
-        for (const auto& pair : columns) {
+        for (const auto &pair: columns) {
             actualColumnsToPrint.push_back(pair.first);
         }
     } else {
-        for (const auto& target : targetedColumns) {
+        for (const auto &target: targetedColumns) {
             if (!columns.contains(target)) {
                 fmt::println("No such column '{}' in table '{}'", target, tableName);
                 return;
@@ -341,7 +354,7 @@ void processSelect(const vector<string>& query, Tables<int>& tables) {
     }
 
     // Print header
-    for (const auto& colName : actualColumnsToPrint) {
+    for (const auto &colName: actualColumnsToPrint) {
         fmt::print("| {:15} ", colName);
     }
     fmt::print("|\n");
@@ -363,9 +376,9 @@ void processSelect(const vector<string>& query, Tables<int>& tables) {
         // Evaluate WHERE conditions
         if (isWherePresent) {
             for (size_t i = 0; i < pattern.conditions.size(); ++i) {
-                const auto& condition = pattern.conditions[i];
-                const auto& columnData = columns.at(condition.column);
-                const auto& cell = columnData[rowIdx];
+                const auto &condition = pattern.conditions[i];
+                const auto &columnData = columns.at(condition.column);
+                const auto &cell = columnData[rowIdx];
 
                 bool currentConditionPass = false;
 
@@ -386,7 +399,7 @@ void processSelect(const vector<string>& query, Tables<int>& tables) {
                         currentConditionPass = (cellValue == targetValue);
                     }
                 } else if (std::holds_alternative<std::string>(cell)) {
-                    const std::string& cellValue = std::get<std::string>(cell);
+                    const std::string &cellValue = std::get<std::string>(cell);
 
                     if (condition.operation == "=") {
                         currentConditionPass = (cellValue == condition.value);
@@ -419,7 +432,7 @@ void processSelect(const vector<string>& query, Tables<int>& tables) {
 
         // Only print the row if the condition passes (AND/OR logic)
         if (conditionPass || hasPassedAnyCondition) {
-            for (const auto& colName : actualColumnsToPrint) {
+            for (const auto &colName: actualColumnsToPrint) {
                 printColumnValue(columns.at(colName)[rowIdx]);
                 fmt::print("{: <5}", ""); // Small gap after value
             }
@@ -496,6 +509,36 @@ void processInsert(const vector<string> &query, Tables<int> &tables) {
         }
     }
 
+    // --- Foreign key check ---
+    for (const auto &fk : tables.foreignKeys) {
+        if (fk.referencingTable != tableName) continue;
+
+        vector<string> referencingValues;
+        for (const auto &col : fk.referencingColumns) {
+            referencingValues.push_back(columnsToValue[col]);
+        }
+
+        const auto &refTable = tables.tables[fk.referencedTable];
+        int rowCount = refTable.rowColumn.begin()->second.size();
+        bool matchFound = false;
+
+        for (int row = 0; row < rowCount; ++row) {
+            vector<string> referencedValues;
+            for (const auto &refCol : fk.referencedColumns) {
+                referencedValues.push_back(toString(refTable.rowColumn.at(refCol)[row]));
+            }
+            if (referencingValues == referencedValues) {
+                matchFound = true;
+                break;
+            }
+        }
+
+        if (!matchFound) {
+            fmt::println("Foreign key constraint failed: referencing values not found in referenced table '{}'.", fk.referencedTable);
+            return;
+        }
+    }
+
     // ---- INSERT VALUES ----
     for (auto &[colName, colValues]: table.rowColumn) {
         if (!columnsToValue.contains(colName)) {
@@ -563,6 +606,161 @@ auto defineNumberOfCreateStatements(vector<string> query) {
 
 }
 
+void processAdd(const vector<string> &query, Tables<int> &tables, const string &tableName) {
+    auto newColumnName = query[4];
+    auto &columns = tables.tables[tableName].rowColumn;
+    auto type = query[5];
+    ColumnValue defaultType;
+
+    if (columns.contains(newColumnName)) {
+        fmt::println("column {} already existst in table {} ", newColumnName, tableName);
+        return;
+    }
+
+    if (type == "int") {
+        // Store a vector of ColumnValue with a default value (int)
+        defaultType = {ColumnValue(0)};  // Correct for vector of ColumnValue
+    } else if (type == "string") {
+        // Store a vector of ColumnValue with a default value (empty string)
+        defaultType = {ColumnValue("null")};  // Correct for vector of ColumnValue
+    } else if (type == "float") {
+        // Store a vector of ColumnValue with a default value (float)
+        defaultType = {ColumnValue(0.0f)};  // Correct for vector of ColumnValue
+    }
+
+    // we need to know the size of one of the primary key columns to populate the table with default values
+    auto primaryKeyColumn = tables.primaryKeys[tableName][0];
+    auto size = columns[primaryKeyColumn].size();
+
+    vector<ColumnValue> defaultColumnValues(size, defaultType);
+
+    columns[newColumnName] = defaultColumnValues;
+
+}
+
+void processForeignKey(const vector<string> &query, Tables<int> &tables, const string &tableName) {
+    vector<string> referencingColumns;
+    vector<string> referencedColumns;
+
+
+    string referencedTable;
+
+    bool inReferencingColumns = false;
+    bool inReferencedColumns = false;
+
+    for (size_t i = 0; i < query.size(); ++i) {
+        if (query[i] == "foreign" && i + 1 < query.size() && query[i + 1] == "key") {
+            inReferencingColumns = true;
+            i += 2; // skip foreign key
+            continue;
+        }
+
+        if (inReferencingColumns && query[i] == "(") continue;
+        if (inReferencingColumns && query[i] == ")") {
+            inReferencingColumns = false;
+            continue;
+        }
+        if (inReferencingColumns) {
+            referencingColumns.push_back(query[i]);
+            continue;
+        }
+
+        if (query[i] == "references" && i + 1 < query.size()) {
+            referencedTable = query[++i];
+            inReferencedColumns = true;
+            continue;
+        }
+
+        if (inReferencedColumns && query[i] == "(") continue;
+        if (inReferencedColumns && query[i] == ")") {
+            inReferencedColumns = false;
+            continue;
+        }
+        if (inReferencedColumns) {
+            referencedColumns.push_back(query[i]);
+        }
+    }
+
+    for (const auto& fk : tables.foreignKeys) {
+        if (fk.referencingTable == tableName &&
+            fk.referencedTable == referencedTable &&
+            fk.referencingColumns == referencingColumns &&
+            fk.referencedColumns == referencedColumns) {
+            fmt::println("This foreign key relationship already exists.");
+            return;
+        }
+    }
+
+    //  Check existence of referenced table
+    if (!tables.tables.contains(referencedTable)) {
+        fmt::println("Table '{}' does not exist.", referencedTable);
+        return;
+    }
+
+    //  Check if referenced columns exist in referenced table
+    for (const auto& col : referencedColumns) {
+        if (!tables.tables[referencedTable].rowColumn.contains(col)) {
+            fmt::println("Referenced column '{}' does not exist in table '{}'.", col, referencedTable);
+            return;
+        }
+    }
+
+    //  Check if referencing columns exist in referencing table
+    for (const auto& col : referencingColumns) {
+        if (!tables.tables[tableName].rowColumn.contains(col)) {
+            fmt::println("Referencing column '{}' does not exist in table '{}'.", col, tableName);
+            return;
+        }
+    }
+
+    // : Check if referenced columns match the primary key of the referenced table
+    auto pkOfReferenced = tables.primaryKeys[referencedTable];
+    vector<string> sortedReferenced = referencedColumns;
+    vector<string> sortedPK = pkOfReferenced;
+
+    sort(sortedReferenced.begin(), sortedReferenced.end());
+    sort(sortedPK.begin(), sortedPK.end());
+
+    if (sortedReferenced != sortedPK) {
+        fmt::println("Referenced columns do not match the primary key of '{}'.", referencedTable);
+        return;
+    }
+
+    // Step 5: Ensure sizes match (number of columns)
+    if (referencingColumns.size() != referencedColumns.size()) {
+        fmt::println("Mismatched column count in referencing and referenced keys.");
+        return;
+    }
+
+    // Step 6: Save the foreign key definition
+    ForeignKey foreignKey = ForeignKey(tableName, referencingColumns, referencedTable, referencedColumns);
+    tables.foreignKeys.push_back(foreignKey);
+
+}
+
+
+void processAlter(const vector<string> &query, Tables<int> &tables) {
+    auto tableName = query[2];
+
+    if (!tables.tables.contains(tableName)) {
+        fmt::println("Table '{}' does not exist.", tableName);
+        return;
+    }
+
+    auto table = tables.tables[tableName].rowColumn;
+
+    //start processing from index 3
+    for (int i = 3; i < query.size(); i++) {
+        if (query[i] == DBCommands::add) {
+            processAdd(query, tables, tableName);
+        }
+        if (query[i] == DBCommands::foreign) {
+            processForeignKey(query, tables, tableName);
+        }
+    }
+
+}
+
 void processQuery(vector<string> query, Tables<int> &tables) {
     if (query[0] == "exit") {
         return;
@@ -585,6 +783,11 @@ void processQuery(vector<string> query, Tables<int> &tables) {
 
     for (auto item: vectorOfInsertQueries) {
         processInsert(item, tables);
+    }
+
+    if (query[0] == DBCommands::alter) {
+        processAlter(query, tables);
+
     }
 
     return;
