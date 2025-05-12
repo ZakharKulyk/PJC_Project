@@ -7,6 +7,8 @@
 #include <fmt/base.h>
 #include <fmt/ranges.h>
 #include <variant>
+#include <fstream>
+#include <filesystem>
 
 
 using namespace std;
@@ -49,6 +51,8 @@ public:
     map<string, RowColumn<T>> tables;
     map<string, vector<string>> primaryKeys;
     vector<ForeignKey> foreignKeys;
+
+    string savingPath;
 };
 
 
@@ -81,6 +85,9 @@ namespace DBCommands {
     const string alter = "alter";
     const string foreign = "foreign";
     const string add = "add";
+    const string drop = "drop";
+    const string load = "load";
+    const string save = "save";
 }
 
 
@@ -450,7 +457,6 @@ void processInsert(const vector<string> &query, Tables<int> &tables) {
 
     string tableName = query[2];
 
-
     if (!tables.tables.contains(tableName)) {
         fmt::println("Table '{}' does not exist.", tableName);
         return;
@@ -510,11 +516,11 @@ void processInsert(const vector<string> &query, Tables<int> &tables) {
     }
 
     // --- Foreign key check ---
-    for (const auto &fk : tables.foreignKeys) {
+    for (const auto &fk: tables.foreignKeys) {
         if (fk.referencingTable != tableName) continue;
 
         vector<string> referencingValues;
-        for (const auto &col : fk.referencingColumns) {
+        for (const auto &col: fk.referencingColumns) {
             referencingValues.push_back(columnsToValue[col]);
         }
 
@@ -524,7 +530,7 @@ void processInsert(const vector<string> &query, Tables<int> &tables) {
 
         for (int row = 0; row < rowCount; ++row) {
             vector<string> referencedValues;
-            for (const auto &refCol : fk.referencedColumns) {
+            for (const auto &refCol: fk.referencedColumns) {
                 referencedValues.push_back(toString(refTable.rowColumn.at(refCol)[row]));
             }
             if (referencingValues == referencedValues) {
@@ -534,7 +540,8 @@ void processInsert(const vector<string> &query, Tables<int> &tables) {
         }
 
         if (!matchFound) {
-            fmt::println("Foreign key constraint failed: referencing values not found in referenced table '{}'.", fk.referencedTable);
+            fmt::println("Foreign key constraint failed: referencing values not found in referenced table '{}'.",
+                         fk.referencedTable);
             return;
         }
     }
@@ -651,7 +658,7 @@ void processForeignKey(const vector<string> &query, Tables<int> &tables, const s
     for (size_t i = 0; i < query.size(); ++i) {
         if (query[i] == "foreign" && i + 1 < query.size() && query[i + 1] == "key") {
             inReferencingColumns = true;
-            i += 2; // skip foreign key
+            i += 2;
             continue;
         }
 
@@ -681,7 +688,23 @@ void processForeignKey(const vector<string> &query, Tables<int> &tables, const s
         }
     }
 
-    for (const auto& fk : tables.foreignKeys) {
+    // Check that types of referencing and referenced columns match
+    for (size_t i = 0; i < referencingColumns.size(); ++i) {
+        const auto &referencingCol = tables.tables[tableName].rowColumn[referencingColumns[i]];
+        const auto &referencedCol = tables.tables[referencedTable].rowColumn[referencedColumns[i]];
+
+        if (!referencingCol.empty() && !referencedCol.empty()) {
+            if (referencingCol.front().index() != referencedCol.front().index()) {
+                fmt::println(
+                        "Type mismatch: referencing column '{}' and referenced column '{}' must be of the same type.",
+                        referencingColumns[i], referencedColumns[i]);
+                return;
+            }
+        }
+    }
+
+
+    for (const auto &fk: tables.foreignKeys) {
         if (fk.referencingTable == tableName &&
             fk.referencedTable == referencedTable &&
             fk.referencingColumns == referencingColumns &&
@@ -698,7 +721,7 @@ void processForeignKey(const vector<string> &query, Tables<int> &tables, const s
     }
 
     //  Check if referenced columns exist in referenced table
-    for (const auto& col : referencedColumns) {
+    for (const auto &col: referencedColumns) {
         if (!tables.tables[referencedTable].rowColumn.contains(col)) {
             fmt::println("Referenced column '{}' does not exist in table '{}'.", col, referencedTable);
             return;
@@ -706,7 +729,7 @@ void processForeignKey(const vector<string> &query, Tables<int> &tables, const s
     }
 
     //  Check if referencing columns exist in referencing table
-    for (const auto& col : referencingColumns) {
+    for (const auto &col: referencingColumns) {
         if (!tables.tables[tableName].rowColumn.contains(col)) {
             fmt::println("Referencing column '{}' does not exist in table '{}'.", col, tableName);
             return;
@@ -738,6 +761,104 @@ void processForeignKey(const vector<string> &query, Tables<int> &tables, const s
 
 }
 
+auto defineNumberOfAlterStatements(const vector<string> &query) {
+    vector<vector<string>> result;
+    vector<string>::const_iterator beginRange;
+    vector<string>::const_iterator endRange;
+
+    bool isAlterStatement = false;
+
+    for (auto it = query.begin(); it != query.end(); ++it) {
+        if (*it == "alter" && (it + 1 != query.end()) && *(it + 1) == "table") {
+            beginRange = it;
+            isAlterStatement = true;
+        }
+
+        if (isAlterStatement && (*it == "drop" || *it == "add" || *it == "foreign")) {
+
+            auto tempIt = it;
+            while (tempIt != query.end() && *tempIt != "alter") {
+                ++tempIt;
+            }
+            endRange = tempIt;
+
+            result.emplace_back(beginRange, endRange);
+            it = --tempIt;
+            isAlterStatement = false;
+        }
+    }
+
+    return result;
+}
+
+void alterTableDropColumn(const vector<string> &query, Tables<int> &tables, const string &tableName) {
+
+    string columnToDrop = query[4];
+
+
+    if (!tables.tables.contains(tableName)) {
+        fmt::println("Table '{}' does not exist.", tableName);
+        return;
+    }
+
+    RowColumn<int> &table = tables.tables[tableName];
+
+
+    if (!table.rowColumn.contains(columnToDrop)) {
+        fmt::println("Column '{}' does not exist in table '{}'.", columnToDrop, tableName);
+        return;
+    }
+
+
+    auto &pkCols = tables.primaryKeys[tableName];
+    if (find(pkCols.begin(), pkCols.end(), columnToDrop) != pkCols.end()) {
+        fmt::println("Cannot drop column '{}': it is part of the primary key.", columnToDrop);
+        return;
+    }
+
+
+    for (const auto &fk: tables.foreignKeys) {
+        if ((fk.referencingTable == tableName &&
+             find(fk.referencingColumns.begin(), fk.referencingColumns.end(), columnToDrop) !=
+             fk.referencingColumns.end()) ||
+            (fk.referencedTable == tableName &&
+             find(fk.referencedColumns.begin(), fk.referencedColumns.end(), columnToDrop) !=
+             fk.referencedColumns.end())) {
+            fmt::println("Cannot drop column '{}': it is part of a foreign key relationship.", columnToDrop);
+            return;
+        }
+    }
+
+
+    table.rowColumn.erase(columnToDrop);
+    fmt::println("Column '{}' dropped from table '{}'.", columnToDrop, tableName);
+}
+
+void dropTable(const vector<string> &query, Tables<int> &tables) {
+    auto tableName = query[2];
+
+    if (query.size() < 3 || query[0] != "drop" || query[1] != "table") {
+        fmt::println("Incorrect drop table syntax. Expected: DROP TABLE <tableName>");
+        return;
+    }
+
+    if (!tables.tables.contains(tableName)) {
+        fmt::println("Table '{}' does not exist.", tableName);
+        return;
+    }
+
+
+    deleteTable(tableName, tables);
+    tables.primaryKeys.erase(tableName);
+
+    erase_if(tables.foreignKeys, [&tableName](ForeignKey key) {
+        return key.referencedTable == tableName || key.referencingTable == tableName;
+    });
+
+
+    fmt::println("Table '{}' dropped successfully.", tableName);
+}
+
 
 void processAlter(const vector<string> &query, Tables<int> &tables) {
     auto tableName = query[2];
@@ -754,6 +875,9 @@ void processAlter(const vector<string> &query, Tables<int> &tables) {
         if (query[i] == DBCommands::add) {
             processAdd(query, tables, tableName);
         }
+        if (query[i] == DBCommands::drop) {
+            alterTableDropColumn(query, tables, tableName);
+        }
         if (query[i] == DBCommands::foreign) {
             processForeignKey(query, tables, tableName);
         }
@@ -761,8 +885,120 @@ void processAlter(const vector<string> &query, Tables<int> &tables) {
 
 }
 
+
+void processFile(const vector<string> &query, Tables<int> &tables) {
+    auto path = query[1];
+    auto file = fstream(path);
+    string word = "";
+    vector<string> toExecute;
+
+    if (!filesystem::exists(path)) {
+        fmt::println("no such file exists");
+        return;
+    }
+
+
+    while (file >> word) {
+        toExecute.push_back(word);
+    }
+
+    auto vectorOfCreateQueries = defineNumberOfCreateStatements(toExecute);
+
+    for (const auto &item: vectorOfCreateQueries) {
+        processCreate(item, tables);
+    }
+
+
+    auto vectorOfInsertQueries = defineNumberOfInsertStatements(toExecute);
+
+    for (auto &item: vectorOfInsertQueries) {
+        processInsert(item, tables);
+    }
+
+    auto vectorOfAlterStatements = defineNumberOfAlterStatements(toExecute);
+
+    for (const auto &item: vectorOfAlterStatements) {
+        processAlter(item, tables);
+    }
+
+
+    fmt::println("{}", toExecute);
+
+}
+
+
+void processSave(const string &filePath,  Tables<int> &tables) {
+    std::ofstream out(filePath);  // overwrite the file
+    if (!out.is_open()) {
+        fmt::println("Could not open file '{}'", filePath);
+        return;
+    }
+    tables.savingPath = filePath;
+
+    for (const auto &[tableName, rowColumn]: tables.tables) {
+        const auto &columns = rowColumn.rowColumn;
+        if (columns.empty()) continue;
+
+        out << "Table: " << tableName << "\n";
+
+        std::vector<std::string> actualColumnsToPrint;
+        for (const auto &[colName, _]: columns) {
+            actualColumnsToPrint.push_back(colName);
+        }
+
+        // Header
+        for (const auto &colName: actualColumnsToPrint) {
+            out << fmt::format("| {:15} ", colName);
+        }
+        out << "|\n";
+
+        // Separator
+        for (size_t i = 0; i < actualColumnsToPrint.size(); ++i) {
+            out << fmt::format("|{:-^17}", "");
+        }
+        out << "|\n";
+
+        // Row count
+        int numRows = columns.begin()->second.size();
+
+        // Rows
+        for (int rowIdx = 0; rowIdx < numRows; ++rowIdx) {
+            for (const auto &colName: actualColumnsToPrint) {
+                const auto &cell = columns.at(colName)[rowIdx];
+                std::string value = std::visit([](auto &&v) { return fmt::format("{}", v); }, cell);
+                out << fmt::format("| {:15} ", value);
+            }
+            out << "|\n";
+        }
+
+        out << "\n";
+    }
+
+    fmt::println("All tables saved to '{}'", filePath);
+}
+
+
+
+
 void processQuery(vector<string> query, Tables<int> &tables) {
     if (query[0] == "exit") {
+        fmt::println("program terminated, back up is created");
+        processSave(tables.savingPath, tables);
+        exit(0);
+
+    }
+
+    if (query[0] == DBCommands::load) {
+        processFile(query, tables);
+        return;
+    }
+
+    if (query[0] == DBCommands::save) {
+        processSave(query[1], tables);
+    }
+
+    if (query[0] == DBCommands::drop) {
+        dropTable(query, tables);
         return;
     }
 
@@ -779,22 +1015,21 @@ void processQuery(vector<string> query, Tables<int> &tables) {
     }
 
 
-    auto vectorOfInsertQueries = defineNumberOfInsertStatements(query);
+    auto vectorOfAlterStatements = defineNumberOfAlterStatements(query);
 
-    for (auto item: vectorOfInsertQueries) {
-        processInsert(item, tables);
+    for (const auto &item: vectorOfAlterStatements) {
+        processAlter(item, tables);
     }
 
-    if (query[0] == DBCommands::alter) {
-        processAlter(query, tables);
 
+    auto vectorOfInsertQueries = defineNumberOfInsertStatements(query);
+
+    for (auto &item: vectorOfInsertQueries) {
+        processInsert(item, tables);
     }
 
     return;
 }
-
-
-
 
 // Define static member outside the class
 
