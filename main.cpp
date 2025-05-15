@@ -11,6 +11,131 @@
 #include <filesystem>
 
 
+/* This project emulates a simplified Structured Query Language (SQL) engine.
+ *
+ * -- Data Storage:
+ *
+ *     * The database engine uses the classes `Tables` and `RowColumn`, combined with `std::map`, for in-memory storage.
+ *       The core idea is to represent data in the form of:
+ *
+ *         map< tableName, map< string, vector<ReferencedType> > >
+ *
+ *       Here, the inner map represents the table schema, where each key is a column name and the value is a vector
+ *       holding the data for that column.
+ *
+ * -- Features:
+ *
+ *     * Table creation
+ *     * Adding columns
+ *     * Dropping columns
+ *     * Inserting data
+ *     * SELECT statements
+ *     * SELECT with multiple WHERE conditions and logical operators (AND, OR)
+ *     * UPDATE statements
+ *     * UPDATE with multiple WHERE conditions and logical operators
+ *     * Adding primary keys
+ *     * Adding foreign keys
+ *     * Reading SQL commands from a file
+ *     * Saving the database state to a file
+ *
+ * -- Example Queries:
+ *
+ *     create person (
+ *         id int primary key
+ *         name string
+ *     )
+ *
+ *     create grade (
+ *         mark int primary key
+ *     )
+ *
+ *     create persongrade (
+ *         personid int
+ *         markid int
+ *         primary key ( personid )
+ *         primary key ( markid )
+ *     )
+ *
+ *     alter table persongrade foreign key ( personid ) references person ( id )
+ *     alter table persongrade foreign key ( markid ) references grade ( mark )
+ *
+ *     insert into person ( id name ) values ( 1 zakhar )
+ *     insert into person ( id name ) values ( 2 roman )
+ *     insert into person ( id name ) values ( 3 julia )
+ *     insert into person ( id name ) values ( 4 Tom )
+ *     insert into person ( id name ) values ( 5 John )
+ *     insert into person ( id name ) values ( 6 Peter )
+ *
+ *     insert into grade ( mark ) values ( 1 )
+ *     insert into grade ( mark ) values ( 2 )
+ *     insert into grade ( mark ) values ( 3 )
+ *     insert into grade ( mark ) values ( 4 )
+ *     insert into grade ( mark ) values ( 5 )
+ *
+ *     insert into persongrade ( personid markid ) values ( 1 1 )
+ *     insert into persongrade ( personid markid ) values ( 2 3 )
+ *     insert into persongrade ( personid markid ) values ( 3 2 )
+ *     insert into persongrade ( personid markid ) values ( 4 5 )
+ *     insert into persongrade ( personid markid ) values ( 5 3 )
+ *     insert into persongrade ( personid markid ) values ( 6 1 )
+ *
+ * -- Notes:
+ *
+ *     * Primary keys can be defined directly in the `create` statement. Multiple `create` statements can be combined
+ *       and executed as a single query.
+ *
+ *     * Different types of `create`, `insert`, and `alter` statements can also be written in a single query.
+ *
+ *     * The `alter` statement allows:
+ *         - Adding foreign keys
+ *         - Adding columns
+ *         - Dropping columns
+ *
+ *         Example:
+ *             alter table person add email string
+ *             alter table person drop email
+ *
+ *     * The `insert` statement uses the first pair of parentheses to specify the target columns and the second
+ *       pair to provide the corresponding values.
+ *
+ *     * The `select` statement allows specifying either a list of columns or using the `*` wildcard.
+ *       WHERE conditions support operators like: `>`, `<`, `<=`, `>=`, `=` and can be combined with
+ *       logical operators like `and`, `or`.
+ *
+ *         Examples:
+ *
+ *             select * from TableName
+ *             select column column1 from TableName
+ *
+ *             select column column1
+ *             from TableName
+ *             where column >= 1 and column <= 5
+ *
+ *     * The `update` statement allows modifying existing data in the database. It supports WHERE conditions
+ *       in the same format as `select`.
+ *
+ *         Example:
+ *             update TableName
+ *             set column1 = newVal column2 = newVal2
+ *             where column3 = 1 or column3 = 5
+ *
+ *     * Tables can be removed using the `drop` statement:
+ *
+ *         drop table TableName
+ *
+ *     * It is possible to load a state from .sql file
+ *
+ *          Example:
+ *               load path
+ *
+ *     * it is possible to save a state to file .txt ( if during the execution user did not use `save`, during program
+ *       termination there will be a request to provide a path for saving the state. If `save` was used, during
+ *       program termination the state will be saved to the last used path provided to `save`)
+ *
+ *          Example:
+ *                save path
+ */
+
 using namespace std;
 
 using ColumnValue = variant<int, float, string>;  // Define possible types for columns
@@ -23,8 +148,8 @@ void printColumnValue(const ColumnValue &value) {
 
 
 std::string toString(const ColumnValue &val) {
-    return std::visit([](auto &&arg) -> std::string {
-        std::ostringstream oss;
+    return visit([](auto &&arg) -> std::string {
+        ostringstream oss;
         oss << arg;
         return oss.str();
     }, val);
@@ -73,7 +198,7 @@ public:
 };
 
 
-void deleteTable(string tableName, Tables<int> &tables) {
+void deleteTable(string &tableName, Tables<int> &tables) {
     tables.tables.erase(tableName);
 }
 
@@ -88,6 +213,7 @@ namespace DBCommands {
     const string drop = "drop";
     const string load = "load";
     const string save = "save";
+    const string update = "update";
 }
 
 
@@ -218,6 +344,7 @@ void processCreate(vector<string> query, Tables<int> &tables) {
 
     // Add this table to the tables map
     tables.tables[tableName] = data;
+
     if (!processPrimaryKeysWithCreate(query, tables)) {
         deleteTable(tableName, tables);
     }
@@ -376,7 +503,7 @@ void processSelect(const vector<string> &query, Tables<int> &tables) {
     int numRows = columns.begin()->second.size();
 
     // Print each row
-    for (int rowIdx = 0; rowIdx < numRows; ++rowIdx) {
+    for (int rowIdx = 1; rowIdx < numRows; ++rowIdx) {
         bool conditionPass = true;  // Assume the row is valid until proven otherwise
         bool hasPassedAnyCondition = false;  // For OR logic
 
@@ -610,6 +737,113 @@ auto defineNumberOfCreateStatements(vector<string> query) {
     }
 
     return result;
+
+}
+
+auto defineNumberOfUpdateStatements(vector<string> query) {
+
+
+}
+
+
+auto processUpdate(const vector<string> &query, Tables<int> &tables) {
+    bool isWherePresent = false;
+    auto tableName = query[1];
+    WherePattern pattern;
+    if (query[0] != DBCommands::update || query.size() < 3 || query[2] != "set") {
+        fmt::println("invalid update Format");
+        return;
+    }
+
+    if (!tables.tables.contains(tableName)) {
+        fmt::println("no such table exist");
+    }
+
+    int i = 3;
+    map<string, string> columnAndValue;
+    for (i; i < query.size(); i++) {
+        if (query[i] == DBCommands::where) {
+            isWherePresent = true;
+            pattern = processWhereStatement(query);
+            break;
+        }
+        if (query[i] == "=") {
+            columnAndValue[query[i - 1]] = query[i + 1];
+        }
+    }
+
+    for (const auto &item: columnAndValue) {
+        if (!tables.tables[tableName].rowColumn.contains(item.first)) {
+            fmt::println("no such column in table {} ", tableName);
+        }
+    }
+
+
+    if (!isWherePresent) {
+        for (const auto &item: columnAndValue) {
+            vector<ColumnValue> newValues(tables.tables[tableName].rowColumn[item.first].size(), item.second);
+            tables.tables[tableName].rowColumn[item.first] = newValues;
+        }
+    } else {
+        RowColumn<int> &table = tables.tables[tableName];
+        int numRows = table.rowColumn.begin()->second.size();
+
+        for (int rowIdx = 0; rowIdx < numRows; ++rowIdx) {
+            bool conditionPass = true;
+            bool hasPassedAnyCondition = false;
+
+            if (isWherePresent) {
+                for (size_t condIdx = 0; condIdx < pattern.conditions.size(); ++condIdx) {
+                    const auto &cond = pattern.conditions[condIdx];
+                    const auto &column = table.rowColumn.at(cond.column);
+                    const auto &cell = column[rowIdx];
+                    bool currentConditionPass = false;
+
+                    if (std::holds_alternative<int>(cell)) {
+                        int value = std::get<int>(cell);
+                        int target = std::stoi(cond.value);
+                        if (cond.operation == ">") currentConditionPass = value > target;
+                        else if (cond.operation == "<") currentConditionPass = value < target;
+                        else if (cond.operation == ">=") currentConditionPass = value >= target;
+                        else if (cond.operation == "<=") currentConditionPass = value <= target;
+                        else if (cond.operation == "=") currentConditionPass = value == target;
+                    } else if (std::holds_alternative<std::string>(cell)) {
+                        const string &value = std::get<std::string>(cell);
+                        if (cond.operation == "=") currentConditionPass = value == cond.value;
+                        else if (cond.operation == ">") currentConditionPass = value > cond.value;
+                        else if (cond.operation == "<") currentConditionPass = value < cond.value;
+                        else if (cond.operation == ">=") currentConditionPass = value >= cond.value;
+                        else if (cond.operation == "<=") currentConditionPass = value <= cond.value;
+                    }
+
+                    if (condIdx > 0) {
+                        const string &logic = pattern.logicalOperators[condIdx - 1];
+                        if (logic == "and") {
+                            conditionPass = conditionPass && currentConditionPass;
+                        } else if (logic == "or") {
+                            conditionPass = conditionPass || currentConditionPass;
+                        }
+                    } else {
+                        conditionPass = currentConditionPass;
+                    }
+                }
+            }
+
+            if (!isWherePresent || conditionPass) {
+                for (const auto &[col, strVal]: columnAndValue) {
+                    auto &column = table.rowColumn[col];
+                    if (std::holds_alternative<int>(column[rowIdx])) {
+                        column[rowIdx] = std::stoi(strVal);
+                    } else if (std::holds_alternative<float>(column[rowIdx])) {
+                        column[rowIdx] = std::stof(strVal);
+                    } else {
+                        column[rowIdx] = strVal;
+                    }
+                }
+            }
+        }
+
+    }
 
 }
 
@@ -927,7 +1161,7 @@ void processFile(const vector<string> &query, Tables<int> &tables) {
 }
 
 
-void processSave(const string &filePath,  Tables<int> &tables) {
+void processSave(const string &filePath, Tables<int> &tables) {
     std::ofstream out(filePath);  // overwrite the file
     if (!out.is_open()) {
         fmt::println("Could not open file '{}'", filePath);
@@ -978,14 +1212,26 @@ void processSave(const string &filePath,  Tables<int> &tables) {
 }
 
 
-
-
 void processQuery(vector<string> query, Tables<int> &tables) {
     if (query[0] == "exit") {
-        fmt::println("program terminated, back up is created");
-        processSave(tables.savingPath, tables);
-        exit(0);
+        if (tables.savingPath == "") {
+            fmt::println("provide a path for back up");
+            string path;
+            cin >> path;
+            processSave(path, tables);
+            fmt::println("program terminated, back up is created");
+            exit(0);
+        } else {
+            processSave(tables.savingPath, tables);
+            fmt::println("program terminated, back up is created");
+            exit(0);
+        }
 
+    }
+
+    if (query[0] == DBCommands::update) {
+        processUpdate(query, tables);
+        return;
     }
 
     if (query[0] == DBCommands::load) {
@@ -1028,10 +1274,9 @@ void processQuery(vector<string> query, Tables<int> &tables) {
         processInsert(item, tables);
     }
 
+
     return;
 }
-
-// Define static member outside the class
 
 
 void startProgram() {
@@ -1063,7 +1308,7 @@ void startProgram() {
 
 
     }
-    cout << "programm stopped\n";
+    cout << "program stopped\n";
 }
 
 
